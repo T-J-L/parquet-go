@@ -352,8 +352,17 @@ type concatenatingRows struct {
 
 func (c *concatenatingRows) ReadRows(rows []Row) (int, error) {
 	for c.index < len(c.readers) {
-		n, err := c.readers[c.index].ReadRows(rows)
+		reader := c.readers[c.index]
+		if reader == nil {
+			c.index++
+			continue
+		}
+		n, err := reader.ReadRows(rows)
 		if err == io.EOF {
+			if closeErr := reader.Close(); closeErr != nil {
+				return n, closeErr
+			}
+			c.readers[c.index] = nil
 			c.index++
 			if n > 0 {
 				return n, nil
@@ -382,10 +391,14 @@ func (c *concatenatingRowsWrapper) ReadRows(rows []Row) (int, error) {
 }
 
 func (c *concatenatingRowsWrapper) Close() (lastErr error) {
-	for _, r := range c.readers {
+	for i, r := range c.readers {
+		if r == nil {
+			continue
+		}
 		if err := r.Close(); err != nil {
 			lastErr = err
 		}
+		c.readers[i] = nil
 	}
 	return lastErr
 }
@@ -423,10 +436,14 @@ func (r *mergedRowGroupRows) Close() (lastErr error) {
 	r.rowIndex = -1
 	r.seekToRow = 0
 
-	for _, rows := range r.rows {
+	for i, rows := range r.rows {
+		if rows == nil {
+			continue
+		}
 		if err := rows.Close(); err != nil {
 			lastErr = err
 		}
+		r.rows[i] = nil
 	}
 
 	return lastErr
@@ -517,6 +534,9 @@ func (m *mergedRowReader2) initialize() error {
 		case nil:
 			m.readers[i] = r
 		case io.EOF:
+			if closeErr := r.close(); closeErr != nil {
+				return closeErr
+			}
 			m.readers[i] = nil
 		default:
 			return err
@@ -541,6 +561,9 @@ func (m *mergedRowReader2) ReadRows(rows []Row) (n int, err error) {
 			if err != io.EOF {
 				return 0, err
 			}
+			if closeErr := r0.close(); closeErr != nil {
+				return 0, closeErr
+			}
 			r0, m.readers[0] = nil, nil
 		}
 	}
@@ -549,6 +572,9 @@ func (m *mergedRowReader2) ReadRows(rows []Row) (n int, err error) {
 		if err := r1.read(); err != nil {
 			if err != io.EOF {
 				return 0, err
+			}
+			if closeErr := r1.close(); closeErr != nil {
+				return 0, closeErr
 			}
 			r1, m.readers[1] = nil, nil
 		}
@@ -623,6 +649,10 @@ func (m *mergedRowReader) initialize() error {
 		switch err := r.read(); err {
 		case nil:
 		case io.EOF:
+			if closeErr := r.close(); closeErr != nil {
+				m.readers = nil
+				return closeErr
+			}
 			m.readers[i] = nil
 		default:
 			m.readers = nil
@@ -662,6 +692,9 @@ func (m *mergedRowReader) ReadRows(rows []Row) (n int, err error) {
 		if r.empty() { // This readers buffer has been exhausted, repopulate it.
 			if err := r.read(); err != nil {
 				if err == io.EOF {
+					if closeErr := r.close(); closeErr != nil {
+						return n, closeErr
+					}
 					m.heapPop()
 					continue
 				}
@@ -742,10 +775,11 @@ func (m *mergedRowReader) heapSwap(i, j int) {
 }
 
 type bufferedRowReader struct {
-	rows RowReader
-	off  int32
-	end  int32
-	buf  [24]Row
+	rows   RowReader
+	off    int32
+	end    int32
+	closed bool
+	buf    [24]Row
 }
 
 func (r *bufferedRowReader) empty() bool {
@@ -774,6 +808,17 @@ func (r *bufferedRowReader) read() error {
 		return err
 	}
 	r.end += int32(n)
+	return nil
+}
+
+func (r *bufferedRowReader) close() error {
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	if c, ok := r.rows.(io.Closer); ok {
+		return c.Close()
+	}
 	return nil
 }
 

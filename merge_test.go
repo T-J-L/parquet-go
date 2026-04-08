@@ -990,6 +990,87 @@ func TestMergeRowGroupsCursorsAreClosed(t *testing.T) {
 	}
 }
 
+func TestMergeRowGroupsCursorsClosedOnExhaustionWithoutClose(t *testing.T) {
+	type model struct {
+		A int
+	}
+
+	schema := parquet.SchemaOf(model{})
+	options := []parquet.RowGroupOption{
+		parquet.SortingRowGroupConfig(
+			parquet.SortingColumns(
+				parquet.Ascending(schema.Columns()[0]...),
+			),
+		),
+	}
+
+	testCases := []struct {
+		name      string
+		rowGroups []parquet.RowGroup
+	}{
+		{
+			name: "sequential segments",
+			rowGroups: []parquet.RowGroup{
+				sortedRowGroup(options, model{A: 0}, model{A: 1}),
+				sortedRowGroup(options, model{A: 10}, model{A: 11}),
+			},
+		},
+		{
+			name: "overlapping segments",
+			rowGroups: []parquet.RowGroup{
+				sortedRowGroup(options, model{A: 1}, model{A: 3}),
+				sortedRowGroup(options, model{A: 2}, model{A: 4}),
+			},
+		},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.name, func(t *testing.T) {
+			rows := make([]*wrappedRows, 0, len(test.rowGroups))
+			wrappedGroups := make([]parquet.RowGroup, len(test.rowGroups))
+
+			for i := range test.rowGroups {
+				rg := test.rowGroups[i]
+				wrappedGroups[i] = wrappedRowGroup{
+					RowGroup: rg,
+					rowsCallback: func(r parquet.Rows) parquet.Rows {
+						wrapped := &wrappedRows{Rows: r}
+						rows = append(rows, wrapped)
+						return wrapped
+					},
+				}
+			}
+
+			m, err := parquet.MergeRowGroups(wrappedGroups, options...)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			mergedRows := m.Rows()
+			rbuf := make([]parquet.Row, 1)
+			for {
+				_, err := mergedRows.ReadRows(rbuf)
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			for i, wrapped := range rows {
+				if !wrapped.closed {
+					t.Fatalf("row group %d reader was not closed on exhaustion", i)
+				}
+			}
+
+			if err := mergedRows.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestMergeRowGroupsSeekToRow(t *testing.T) {
 	type model struct {
 		A int
