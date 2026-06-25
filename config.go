@@ -97,15 +97,16 @@ func formatCreatedBy(application, version, build string) string {
 //		ReadMode:         ReadModeAsync,
 //	})
 type FileConfig struct {
-	SkipMagicBytes       bool
-	SkipPageIndex        bool
-	SkipBloomFilters     bool
-	PrefetchBloomFilters bool
-	OptimisticRead       bool
-	ReadBufferSize       int
-	ReadMode             ReadMode
-	Schema               *Schema
-	Decryption           *DecryptionConfig
+	SkipMagicBytes           bool
+	SkipPageIndex            bool
+	SkipBloomFilters         bool
+	PrefetchBloomFilters     bool
+	OptimisticRead           bool
+	ReadBufferSize           int
+	OptimisticReadBufferSize int
+	ReadMode                 ReadMode
+	Schema                   *Schema
+	Decryption               *DecryptionConfig
 }
 
 // DefaultFileConfig returns a new FileConfig value initialized with the
@@ -143,14 +144,16 @@ func (c *FileConfig) Apply(options ...FileOption) {
 // ConfigureFile applies configuration options from c to config.
 func (c *FileConfig) ConfigureFile(config *FileConfig) {
 	*config = FileConfig{
-		SkipMagicBytes:       c.SkipMagicBytes,
-		SkipPageIndex:        c.SkipPageIndex,
-		SkipBloomFilters:     c.SkipBloomFilters,
-		PrefetchBloomFilters: c.PrefetchBloomFilters,
-		ReadBufferSize:       cmp.Or(c.ReadBufferSize, config.ReadBufferSize),
-		ReadMode:             ReadMode(cmp.Or(int(c.ReadMode), int(config.ReadMode))),
-		Schema:               cmp.Or(c.Schema, config.Schema),
-		Decryption:           cmp.Or(c.Decryption, config.Decryption),
+		SkipMagicBytes:           c.SkipMagicBytes,
+		SkipPageIndex:            c.SkipPageIndex,
+		SkipBloomFilters:         c.SkipBloomFilters,
+		PrefetchBloomFilters:     c.PrefetchBloomFilters,
+		OptimisticRead:           c.OptimisticRead,
+		ReadBufferSize:           cmp.Or(c.ReadBufferSize, config.ReadBufferSize),
+		OptimisticReadBufferSize: cmp.Or(c.OptimisticReadBufferSize, config.OptimisticReadBufferSize),
+		ReadMode:                 ReadMode(cmp.Or(int(c.ReadMode), int(config.ReadMode))),
+		Schema:                   cmp.Or(c.Schema, config.Schema),
+		Decryption:               cmp.Or(c.Decryption, config.Decryption),
 	}
 }
 
@@ -535,6 +538,13 @@ func PrefetchBloomFilters(prefetch bool) FileOption {
 // caches and achieve similar results (e.g., Tempo).
 func OptimisticRead(enabled bool) FileOption {
 	return fileOption(func(config *FileConfig) { config.OptimisticRead = enabled })
+}
+
+// OptimisticReadBufferSize configures the size of the optimistic read buffer
+// used when OptimisticRead is enabled. When not set, the ReadBufferSize is
+// used instead.
+func OptimisticReadBufferSize(size int) FileOption {
+	return fileOption(func(config *FileConfig) { config.OptimisticReadBufferSize = size })
 }
 
 // FileReadMode is a file configuration option which controls the way pages

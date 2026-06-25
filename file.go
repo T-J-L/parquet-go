@@ -3,6 +3,7 @@ package parquet
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -92,7 +93,8 @@ func OpenFile(r io.ReaderAt, size int64, options ...FileOption) (*File, error) {
 	}
 
 	optimisticRead := c.OptimisticRead
-	optimisticFooterSize := min(int64(c.ReadBufferSize), size)
+	optimisticBufferSize := cmp.Or(c.OptimisticReadBufferSize, c.ReadBufferSize)
+	optimisticFooterSize := min(int64(optimisticBufferSize), size)
 	if !optimisticRead || optimisticFooterSize < 8 {
 		optimisticFooterSize = 8
 	}
